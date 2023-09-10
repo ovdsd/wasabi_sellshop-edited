@@ -1,136 +1,152 @@
 -----------------For support, scripts, and more----------------
 --------------- https://discord.gg/wasabiscripts  -------------
 ---------------------------------------------------------------
+ESX = exports['es_extended']:getSharedObject()
 
-ESX = exports["es_extended"]:getSharedObject()
+RegisterNetEvent('esx:playerLoaded', function(xPlayer)
+    ESX.PlayerData = xPlayer
+    ESX.PlayerLoaded = true
+end)
 
-addCommas = function(n)
-	return tostring(math.floor(n)):reverse():gsub("(%d%d%d)","%1,")
-								  :gsub(",(%-?)$","%1"):reverse()
-end
+RegisterNetEvent('esx:onPlayerLogout', function()
+    table.wipe(ESX.PlayerData)
+    ESX.PlayerLoaded = false
+end)
 
-CreateBlip = function(coords, sprite, colour, text, scale)
-    local blip = AddBlipForCoord(coords)
+RegisterNetEvent('esx:setJob', function(job)
+    ESX.PlayerData.job = job
+end)
+
+
+RegisterNetEvent('lynn_stockshop:setProductPrice')
+AddEventHandler('lynn_stockshop:setProductPrice', function(shop, slot)
+    local input = lib.inputDialog(Strings.sell_price, {Strings.amount_input})
+    local price
+    if not input then price = 0 end
+    price = tonumber(input[1])
+    if price < 0 then price = 0 end
+    TriggerEvent('ox_inventory:closeInventory')
+    TriggerServerEvent('lynn_stockshop:setData', shop, slot, math.floor(price))
+    lib.notify({
+        title = Strings.success,
+        description = (Strings.item_stocked_desc):format(price),
+        type = 'success'
+    })
+end)
+
+local function createBlip(coords, sprite, color, text, scale)
+    local x,y,z = table.unpack(coords)
+    local blip = AddBlipForCoord(x, y, z)
     SetBlipSprite(blip, sprite)
-    SetBlipColour(blip, colour)
-    SetBlipAsShortRange(blip, true)
+    SetBlipDisplay(blip, 4)
     SetBlipScale(blip, scale)
+    SetBlipColour(blip, color)
+    SetBlipAsShortRange(blip, true)
     BeginTextCommandSetBlipName("STRING")
     AddTextComponentString(text)
     EndTextCommandSetBlipName(blip)
+    return blip
 end
 
-AddEventHandler('ws_sellshop:sellItem', function(data)
-    local data = data
-    local input = lib.inputDialog('How many would you like to sell?', {'Quantity'})
-    if input then
-        data.quantity = math.floor(tonumber(input[1]))
-        if data.quantity < 1 then
-            lib.notify({
-                title = 'Error',
-                description = 'Please enter a valid amount!',
-                type = 'error'
+CreateThread(function()
+    for _,v in pairs(TokoCFG.Shops) do
+        if v.blip.enabled then
+            createBlip(v.blip.coords, v.blip.sprite, v.blip.color, v.blip.string, v.blip.scale)
+        end
+    end
+end)
+
+CreateThread(function()
+    local textUI, points = nil, {}
+    while not ESX.PlayerLoaded do Wait(1000) end
+    for k,v in pairs(TokoCFG.Shops) do
+        local stashLoc = v.locations.stash.coords
+        local shopLoc = v.locations.shop.coords
+        local bossLoc
+        if v.bossMenu.enabled then
+            bossLoc = v.bossMenu.coords
+        end
+        if not points[k] then points[k] = {} end
+        points[k].stash = lib.points.new({
+            coords = v.locations.stash.coords,
+            distance = v.locations.stash.range,
+            shop = k
+        })
+        points[k].shop = lib.points.new({
+            coords = v.locations.shop.coords,
+            distance = v.locations.shop.range,
+            shop = k
+        })
+        if v.bossMenu.enabled then
+            points[k].bossMenu = lib.points.new({
+                coords = v.bossMenu.coords,
+                distance = v.bossMenu.range,
+                shop = k
             })
-        else
-            local done = lib.callback.await('ws_sellshop:sellItem', 100, data)
-            if not done then
-                lib.notify({
-                    title = 'Error',
-                    description = 'You lacked the requested items to sell!',
-                    type = 'error'
-                })
-            else
-                lib.notify({
-                    title = 'Success',
-                    description = 'You sold your goods for and profited $'..addCommas(done),
-                    type = 'success'
-                })
+        end
+    end
+    for k,v in pairs(points) do
+        function v.stash:nearby()
+            if not self.isClosest or ESX.PlayerData.job.name ~= self.shop then return end
+            if self.currentDistance < self.distance then
+                if not textUI then
+                    lib.showTextUI(TokoCFG.Shops[self.shop].locations.stash.string)
+                    textUI = true
+                end
+                if IsControlJustReleased(0, 38) then
+                    exports.ox_inventory:openInventory('stash', self.shop)
+                end
             end
         end
-    else
-        lib.notify({
-            title = 'Error',
-            description = 'Please enter a valid amount!',
-            type = 'error'
-        })
-    end
-end)
+        function v.stash:onExit()
+            if not self.isClosest then return end
+            if textUI then
+                lib.hideTextUI()
+                textUI = nil
+            end
+        end
 
-AddEventHandler('ws_sellshop:interact', function(data)
-    local storeData = data.store
-    local items = storeData.items
-    local Options = {}
-    for i=1, #items do
-        table.insert(Options, {
-            title = items[i].label,
-            description = 'Sell Price: $'..items[i].price,
-            event = 'ws_sellshop:sellItem',
-            args = { item = items[i].item, price = items[i].price, currency = items[i].currency }
-        })
-    end
-    lib.registerContext({
-        id = 'storeInteract',
-        title = storeData.label,
-        options = Options
-    })
-    lib.showContext('storeInteract')
-end)
+        function v.shop:nearby()
+            if not self.isClosest then return end
+            if self.currentDistance < self.distance then
+                if not textUI then
+                    lib.showTextUI(TokoCFG.Shops[self.shop].locations.shop.string)
+                    textUI = true
+                end
+                if IsControlJustReleased(0, 38) then
+                    exports.ox_inventory:openInventory('shop', { type = self.shop, id = 1 })
+                end
+            end
+        end
+        function v.shop:onExit()
+            if not self.isClosest then return end
+            if textUI then
+                lib.hideTextUI()
+                textUI = nil
+            end
+        end
 
--- Blips/Targets
-CreateThread(function()
-    for i=1, #Config.SellShops do
-        exports.qtarget:AddBoxZone(i.."_sell_shop", Config.SellShops[i].coords, 1.0, 1.0, {
-            name=i.."_sell_shop",
-            heading=Config.SellShops[i].blip.heading,
-            debugPoly=false,
-            minZ=Config.SellShops[i].coords.z-1.5,
-            maxZ=Config.SellShops[i].coords.z+1.5
-        }, {
-            options = {
-                {
-                    event = 'ws_sellshop:interact',
-                    icon = 'fas fa-hand-paper',
-                    label = 'Interact',
-                    store = Config.SellShops[i]
-                }
-            },
-            job = 'all',
-            distance = 1.5
-        })
-        if Config.SellShops[i].blip.enabled then
-            CreateBlip(Config.SellShops[i].coords, Config.SellShops[i].blip.sprite, Config.SellShops[i].blip.color, Config.SellShops[i].label, Config.SellShops[i].blip.scale)
+        if v?.bossMenu then
+            function v.bossMenu:nearby()
+                if not self.isClosest then return end
+                if self.currentDistance < self.distance then
+                    if not textUI then
+                        lib.showTextUI(TokoCFG.Shops[self.shop].bossMenu.string)
+                        textUI = true
+                    end
+                    if IsControlJustReleased(0, 38) and ESX.PlayerData.job.grade_name == 'boss' then
+                        TriggerEvent('esx_society:openBossMenu', ESX.PlayerData.job.name, function(data, menu)
+                            menu.close()
+                        end, {wash = false})
+                    end
+                end
+            end
+            function v.bossMenu:onExit()
+                if textUI then
+                    lib.hideTextUI()
+                    textUI = nil
+                end
+            end
         end
     end
-end)
-
--- Ped spawn thread
-local pedSpawned = {}
-local pedPool = {}
-CreateThread(function()
-	while true do
-		local sleep = 1500
-        local playerPed = cache.ped
-        local pos = GetEntityCoords(playerPed)
-		for i=1, #Config.SellShops do
-			local dist = #(pos - Config.SellShops[i].coords)
-			if dist <= 20 and not pedSpawned[i] then
-				pedSpawned[i] = true
-                lib.requestModel(Config.SellShops[i].ped, 100)
-                lib.requestAnimDict('mini@strip_club@idles@bouncer@base', 100)
-				pedPool[i] = CreatePed(28, Config.SellShops[i].ped, Config.SellShops[i].coords.x, Config.SellShops[i].coords.y, Config.SellShops[i].coords.z, Config.SellShops[i].heading, false, false)
-				FreezeEntityPosition(pedPool[i], true)
-				SetEntityInvincible(pedPool[i], true)
-				SetBlockingOfNonTemporaryEvents(pedPool[i], true)
-				TaskPlayAnim(pedPool[i], 'mini@strip_club@idles@bouncer@base','base', 8.0, 0.0, -1, 1, 0, 0, 0, 0)
-			elseif dist >= 21 and pedSpawned[i] then
-				local model = GetEntityModel(pedPool[i])
-				SetModelAsNoLongerNeeded(model)
-				DeletePed(pedPool[i])
-				SetPedAsNoLongerNeeded(pedPool[i])
-                pedPool[i] = nil
-				pedSpawned[i] = false
-			end
-		end
-		Wait(sleep)
-	end
 end)
